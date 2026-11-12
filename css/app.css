@@ -1,5 +1,6 @@
 :root {
   --bg: #15131b;
+  --statusbar: #15131b;
   --surface: #1f1c28;
   --surface2: #2a2635;
   --line: #3a3547;
@@ -22,6 +23,7 @@
 @media (prefers-color-scheme: light) {
   :root {
     --bg: #f6f2ec;
+    --statusbar: #2a2420;
     --surface: #ffffff;
     --surface2: #efe9e0;
     --line: #dcd4c8;
@@ -62,12 +64,19 @@ body { overflow: hidden; }
   height: 100dvh;
 }
 
+/* Полоса под системной строкой состояния: в установленном приложении её текст всегда белый. */
+#app::before {
+  content: "";
+  flex: none;
+  height: env(safe-area-inset-top);
+  background: var(--statusbar);
+}
+
 #view {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding-top: env(safe-area-inset-top);
 }
 
 h1, h2, h3, h4, p { margin: 0; }
