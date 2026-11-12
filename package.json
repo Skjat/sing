@@ -1,0 +1,10 @@
+{
+  "name": "sing",
+  "private": true,
+  "type": "module",
+  "description": "PWA для обучения пению: план занятий, тренажёр с определением высоты звука и учитель на Claude",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "serve": "python3 -m http.server 8080"
+  }
+}
