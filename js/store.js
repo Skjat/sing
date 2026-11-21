@@ -19,6 +19,8 @@ const defaults = () => ({
   activeSongId: null,
   chat: [],
   weekly: [],
+  teacherNotes: '',      // память учителя: он переписывает её при недельном разборе
+  rangeDismissed: null,  // отклонённое предложение расширить диапазон: { low, high }
 });
 
 function load() {
@@ -112,6 +114,15 @@ export const sessionsThisWeek = () =>
 
 export const doneToday = () =>
   state.sessions.some((s) => s.kind === 'session' && s.date.slice(0, 10) === dayKey());
+
+/** Прошлый результат того же упражнения — для сравнения «было → стало». */
+export function lastResultOf(id) {
+  for (let i = state.sessions.length - 1; i >= 0; i--) {
+    const r = (state.sessions[i].results || []).find((x) => x.id === id && !x.skipped);
+    if (r) return r;
+  }
+  return null;
+}
 
 export const activeSong = () => state.songs.find((s) => s.id === state.activeSongId) || state.songs[0] || null;
 

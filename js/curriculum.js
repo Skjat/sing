@@ -1,6 +1,7 @@
 // Библиотека упражнений, 12-недельный план и подгонка под диапазон ученика.
 
 import { noteFull, noteName, INTERVALS } from './music.js';
+import { T, repSeconds, estimateSeconds } from './timeline.js';
 
 const FIVE = [0, 2, 4, 5, 7, 5, 4, 2, 0];
 const ARP8 = [0, 4, 7, 12, 7, 4, 0];
@@ -18,7 +19,7 @@ const ARP8 = [0, 4, 7, 12, 7, 4, 0];
  */
 export const LIB = {
   'breath-446': {
-    title: 'Дыхание животом 4–4–6', cat: 'Дыхание', min: 2, type: 'breath', cycles: 5,
+    title: 'Дыхание животом 4–4–6', cat: 'Дыхание', type: 'breath', cycles: 6,
     phases: [{ label: 'Вдох носом', sec: 4 }, { label: 'Задержка', sec: 4 }, { label: 'Выдох ртом', sec: 6 }],
     how: ['Встаньте ровно, одну ладонь положите на живот, другую на рёбра сбоку.',
       'На вдохе живот и нижние рёбра расходятся в стороны, плечи остаются на месте.',
@@ -26,172 +27,178 @@ export const LIB = {
     feel: 'Плечи и грудь неподвижны. Если кружится голова — сделайте паузу и дышите обычно.',
   },
   'exhale-sss': {
-    title: 'Долгий выдох на «ссс»', cat: 'Дыхание', min: 2, type: 'exhale', reps: 3, sound: 'ссс',
+    title: 'Долгий выдох на «ссс»', cat: 'Дыхание', type: 'exhale', reps: 4, sound: 'ссс',
     how: ['Сделайте спокойный вдох животом.',
       'Выдыхайте на ровное «ссс» как можно дольше, не выдавливая остатки воздуха.',
       'Звук должен быть одинаковым по силе от начала до конца.'],
     feel: 'Работает живот, горло свободно. Растёт длительность — растёт и опора.',
   },
   'lip-trill-glide': {
-    title: 'Губная трель: сирена', cat: 'Разогрев', min: 2, type: 'glide', reps: 4, sound: 'губная трель «бррр»', zone: [0.05, 0.9],
+    title: 'Губная трель: сирена', cat: 'Разогрев', type: 'glide', reps: 8, sound: 'губная трель «бррр»', zone: [0.05, 0.9], stretch: true,
     how: ['Расслабьте губы и выдувайте воздух, чтобы они вибрировали, как у лошадки. Кончиками пальцев можно приподнять щёки.',
       'Добавьте голос и плавно скользите от низкой ноты вверх и обратно.',
       'Громкость небольшая, поток воздуха ровный.'],
     feel: 'Вибрация в губах и вокруг носа, в горле — ничего. Если трель срывается, не хватает ровного выдоха.',
   },
   'hum-glide': {
-    title: 'Сирена на «м»', cat: 'Разогрев', min: 2, type: 'glide', reps: 4, sound: '«м» с закрытым ртом', zone: [0.05, 0.85],
+    title: 'Сирена на «м»', cat: 'Разогрев', type: 'glide', reps: 8, sound: '«м» с закрытым ртом', zone: [0.05, 0.85],
     how: ['Сомкните губы, зубы разомкнуты, язык лежит свободно.',
       'Гудите на «м» и скользите снизу вверх и обратно, как сирена.',
       'Не прибавляйте громкость на верхних нотах.'],
     feel: 'Щекотка на губах и в переносице. Переход между нижним и верхним звучанием — плавный, без щелчка.',
   },
   'straw-glide': {
-    title: 'Пение через трубочку', cat: 'Разогрев', min: 2, type: 'glide', reps: 4, sound: '«у» в коктейльную трубочку', zone: [0.05, 0.9],
+    title: 'Пение через трубочку', cat: 'Разогрев', type: 'glide', reps: 8, sound: '«у» в коктейльную трубочку', zone: [0.05, 0.9], stretch: true,
     how: ['Возьмите тонкую трубочку для напитков, обхватите её губами. Нос не должен пропускать воздух.',
       'Гудите в трубочку и скользите по всему диапазону вверх и вниз.',
       'Можно опустить конец трубочки в стакан с водой на 2–3 см: пузыри должны идти ровно.'],
     feel: 'Голос включается легко, без толчка. Это самое бережное упражнение — годится и для уставшего голоса.',
   },
   cooldown: {
-    title: 'Заминка: скольжение вниз', cat: 'Заминка', min: 1, type: 'glide', reps: 3, sound: 'тихое «м»', zone: [0.0, 0.6], down: true,
+    title: 'Заминка: скольжение вниз', cat: 'Заминка', type: 'glide', reps: 4, sound: 'тихое «м»', zone: [0.0, 0.6], down: true,
     how: ['Тихо гудите на «м» и скользите сверху вниз, как вздох облегчения.',
       'В конце дайте голосу опуститься в самый низ и растаять.'],
     feel: 'Голос возвращается к разговорной высоте. После заминки помолчите пару минут и попейте воды.',
   },
   'match-notes': {
-    title: 'Попадание в ноту', cat: 'Интонация', min: 3, type: 'match', count: 6, syllable: 'а',
+    title: 'Попадание в ноту', cat: 'Интонация', type: 'match', count: 12, syllable: 'а',
     how: ['Послушайте ноту до конца и представьте её «внутри головы».',
       'Спойте её на «а» и удерживайте, пока приложение не засчитает.',
       'Если линия голоса ниже цели — тянитесь вверх плавно, без рывка.'],
     feel: 'Сначала услышать, потом петь. Не подбирайте ноту голосом на ощупь.',
   },
   echo: {
-    title: 'Сыграл — спел', cat: 'Слух', min: 3, type: 'echo', rounds: 5,
+    title: 'Сыграл — спел', cat: 'Слух', type: 'echo', rounds: 6,
     how: ['Сыграйте одну любую ноту на фортепиано или гитаре.',
       'Дайте ей отзвучать или заглушите, затем спойте эту ноту на «а».',
       'Приложение покажет, насколько вы разошлись с инструментом. Октава значения не имеет.'],
     feel: 'Упражнение учит снимать ноту с инструмента — так вы будете находить первый звук песни.',
   },
   sustain: {
-    title: 'Ровный звук', cat: 'Опора', min: 3, type: 'sustain', count: 3, holdSec: 5, syllable: 'а', zone: [0.25, 0.6],
+    title: 'Ровный звук', cat: 'Опора', type: 'sustain', count: 6, holdSec: 6, syllable: 'а', zone: [0.25, 0.6],
     how: ['Вдох животом, начинайте звук мягко, без удара.',
       'Тяните «а» ровно: линия голоса должна лежать на цели без волн.',
       'Заканчивайте звук раньше, чем кончится воздух.'],
     feel: 'Живот медленно подбирается, грудь не падает. Дрожащая линия — признак того, что выдох неровный.',
   },
   'sustain-vowels': {
-    title: 'Гласные на одной ноте', cat: 'Резонанс', min: 3, type: 'sustain', count: 3, holdSec: 8, syllable: 'и–э–а–о–у', zone: [0.3, 0.65],
+    title: 'Гласные на одной ноте', cat: 'Резонанс', type: 'sustain', count: 5, holdSec: 8, syllable: 'и–э–а–о–у', zone: [0.3, 0.65],
     how: ['На одной ноте плавно перетекайте по гласным: и–э–а–о–у.',
       'Меняется только форма рта и языка, высота и громкость остаются прежними.',
       'Челюсть свободна, кончик языка у нижних зубов.'],
     feel: 'Звук остаётся «в одном месте» — впереди, у верхних зубов. Если на «а» нота проседает, вы её «роняете» назад.',
   },
   messa: {
-    title: 'Тише — громче — тише', cat: 'Динамика', min: 3, type: 'sustain', count: 3, holdSec: 8, syllable: 'а', zone: [0.3, 0.6],
+    title: 'Тише — громче — тише', cat: 'Динамика', type: 'sustain', count: 5, holdSec: 8, syllable: 'а', zone: [0.3, 0.6],
     how: ['Начните ноту очень тихо, плавно усильте до уверенной громкости и так же плавно вернитесь к тихой.',
       'Высота не должна уходить: громче — не значит выше.'],
     feel: 'Громкость растёт за счёт выдоха, а не давления в горле. При усилении ноты часто завышают — следите за линией.',
   },
   'trill-5': {
-    title: 'Губная трель по пяти нотам', cat: 'Разогрев', min: 3, type: 'pattern', degrees: FIVE, noteDur: 0.45, syllable: 'губная трель', maxReps: 6,
+    title: 'Губная трель по пяти нотам', cat: 'Разогрев', type: 'pattern', degrees: FIVE, noteDur: 0.45, syllable: 'губная трель', sec: 160,
     how: ['Послушайте попевку и повторите её губной трелью.',
       'Каждый повтор начинается на ступень выше.'],
     feel: 'Ноты связаны, между ними нет толчков. Трель не прерывается на верхней ноте.',
   },
+  'step-2': {
+    title: 'Две соседние ноты', cat: 'Интонация', type: 'pattern', degrees: [0, 2, 0], noteDur: 0.8, syllable: 'ма', sec: 150,
+    how: ['Послушайте три звука: нота, шаг вверх и возврат. Повторите на «ма-ма-ма».',
+      'Каждый следующий повтор начинается на полутон выше, затем попевка спускается обратно.'],
+    feel: 'Шаг вверх небольшой, не тянитесь к нему подбородком. Возвращайтесь точно на ту же ноту, с которой начали.',
+  },
   'scale-3': {
-    title: 'Три ноты на «ма»', cat: 'Интонация', min: 3, type: 'pattern', degrees: [0, 2, 4, 2, 0], noteDur: 0.65, syllable: 'ма', maxReps: 6,
+    title: 'Три ноты на «ма»', cat: 'Интонация', type: 'pattern', degrees: [0, 2, 4, 2, 0], noteDur: 0.65, syllable: 'ма', sec: 160,
     how: ['Послушайте пять звуков и повторите на «ма-ма-ма-ма-ма».',
       'Каждую ноту берите сразу точно, без подъезда снизу.'],
     feel: 'Согласная «м» помогает начать звук мягко и близко. Верхняя нота не громче остальных.',
   },
   'scale-5': {
-    title: 'Пять нот вверх и вниз', cat: 'Интонация', min: 4, type: 'pattern', degrees: FIVE, noteDur: 0.5, syllable: 'ма', maxReps: 7,
+    title: 'Пять нот вверх и вниз', cat: 'Интонация', type: 'pattern', degrees: FIVE, noteDur: 0.5, syllable: 'ма', sec: 190,
     how: ['Повторите попевку из пяти ступеней вверх и вниз на «ма».',
       'На спуске не давайте нотам «сползать» ниже цели — это самая частая ошибка.'],
     feel: 'Спускаясь, думайте, что шаги маленькие. Дыхания хватает на всю попевку.',
   },
   arp: {
-    title: 'Трезвучие', cat: 'Интонация', min: 3, type: 'pattern', degrees: [0, 4, 7, 4, 0], noteDur: 0.65, syllable: 'ми', maxReps: 7,
+    title: 'Трезвучие', cat: 'Интонация', type: 'pattern', degrees: [0, 4, 7, 4, 0], noteDur: 0.65, syllable: 'ми', sec: 170,
     how: ['Спойте по звукам аккорда: до–ми–соль–ми–до на «ми-и-и-и-и».',
       'Скачки берите уверенно, заранее услышав ноту.'],
     feel: 'Между нотами нет «въезда». Верхний звук лёгкий, без нажима.',
   },
   'arp-8': {
-    title: 'Арпеджио до октавы', cat: 'Диапазон', min: 4, type: 'pattern', degrees: ARP8, noteDur: 0.55, syllable: 'но', maxReps: 7,
+    title: 'Арпеджио до октавы', cat: 'Диапазон', type: 'pattern', degrees: ARP8, noteDur: 0.55, syllable: 'но', sec: 180, stretch: true,
     how: ['Спойте по звукам аккорда до верхней октавы и обратно на «но-о-о».',
       'К верхней ноте не усиливайте звук, а наоборот — облегчайте.'],
     feel: 'Челюсть свободно опускается к верхней ноте. Горло не сжимается.',
   },
   'scale-8': {
-    title: 'Гамма на октаву', cat: 'Интонация', min: 4, type: 'pattern', degrees: [0, 2, 4, 5, 7, 9, 11, 12, 11, 9, 7, 5, 4, 2, 0], noteDur: 0.42, syllable: 'на', maxReps: 5,
+    title: 'Гамма на октаву', cat: 'Интонация', type: 'pattern', degrees: [0, 2, 4, 5, 7, 9, 11, 12, 11, 9, 7, 5, 4, 2, 0], noteDur: 0.42, syllable: 'на', sec: 190,
     how: ['Спойте мажорную гамму вверх и вниз на «на-на-на».',
       'Седьмую ступень перед верхней нотой берите высоко — её обычно занижают.'],
     feel: 'Ровное движение без ускорения. Вдох берите перед началом, а не посередине.',
   },
   'ng-5': {
-    title: '«Нг» по пяти нотам', cat: 'Резонанс', min: 3, type: 'pattern', degrees: FIVE, noteDur: 0.5, syllable: 'нг', maxReps: 6,
+    title: '«Нг» по пяти нотам', cat: 'Резонанс', type: 'pattern', degrees: FIVE, noteDur: 0.5, syllable: 'нг', sec: 160,
     how: ['Скажите «синг» и задержитесь на последнем звуке: задняя часть языка прижата к нёбу, рот приоткрыт.',
       'На этом «нг» спойте попевку из пяти нот.'],
     feel: 'Звук гудит в носу и переносице. Так голос находит верхний резонанс без усилия.',
   },
   'nay-arp': {
-    title: '«Ней-ней» по арпеджио', cat: 'Регистры', min: 4, type: 'pattern', degrees: ARP8, noteDur: 0.5, syllable: 'ней', maxReps: 6,
+    title: '«Ней-ней» по арпеджио', cat: 'Регистры', type: 'pattern', degrees: ARP8, noteDur: 0.5, syllable: 'ней', sec: 170,
     how: ['Спойте арпеджио на капризное, слегка «гнусавое» «ней-ней-ней».',
       'Звук яркий и близкий, как у дразнящегося ребёнка, но негромкий.'],
     feel: 'Яркий звук помогает пройти переходные ноты без срыва. Это рабочий приём, а не красивый тембр.',
   },
   'gug-down': {
-    title: '«Гуг» сверху вниз', cat: 'Регистры', min: 3, type: 'pattern', degrees: [12, 7, 4, 0], noteDur: 0.55, syllable: 'гуг', maxReps: 6,
+    title: '«Гуг» сверху вниз', cat: 'Регистры', type: 'pattern', degrees: [12, 7, 4, 0], noteDur: 0.55, syllable: 'гуг', sec: 140,
     how: ['Послушайте и спойте сверху вниз на «гуг-гуг-гуг-гуг».',
       'Начинайте верхнюю ноту легко, почти как зевок.'],
     feel: 'Гортань остаётся внизу, звук округлый. Верхняя нота не кричится.',
   },
   'octave-slide': {
-    title: 'Скольжение на октаву', cat: 'Регистры', min: 3, type: 'pattern', degrees: [0, 12, 0], noteDur: 1.1, syllable: 'у', maxReps: 6, slide: true,
+    title: 'Скольжение на октаву', cat: 'Регистры', type: 'pattern', degrees: [0, 12, 0], noteDur: 1.1, syllable: 'у', sec: 150, slide: true,
     how: ['На «у» плавно проскользите от нижней ноты до верхней и обратно, задевая все промежуточные звуки.',
       'Не прибавляйте громкость по пути вверх.'],
     feel: 'Голос переходит из грудного звучания в головное без щелчка. Если щёлкает — пойте тише.',
   },
   'octave-jump': {
-    title: 'Скачок на октаву', cat: 'Диапазон', min: 3, type: 'pattern', degrees: [0, 12, 0, 12, 0], noteDur: 0.65, syllable: 'йа', maxReps: 6,
+    title: 'Скачок на октаву', cat: 'Диапазон', type: 'pattern', degrees: [0, 12, 0, 12, 0], noteDur: 0.65, syllable: 'йа', sec: 150, stretch: true,
     how: ['Спойте нижнюю ноту, прыгните на октаву вверх и вернитесь, на «йа».',
       'Верхнюю ноту берите сверху, как будто опускаетесь на неё.'],
     feel: 'Скачок чистый, без подъезда. Нижняя нота после возврата не проседает.',
   },
   'scale-9': {
-    title: 'Беглая гамма до ноны', cat: 'Беглость', min: 3, type: 'pattern', degrees: [0, 2, 4, 5, 7, 9, 11, 12, 14, 12, 11, 9, 7, 5, 4, 2, 0], noteDur: 0.3, syllable: 'а', maxReps: 5,
+    title: 'Беглая гамма до ноны', cat: 'Беглость', type: 'pattern', degrees: [0, 2, 4, 5, 7, 9, 11, 12, 14, 12, 11, 9, 7, 5, 4, 2, 0], noteDur: 0.3, syllable: 'а', sec: 170,
     how: ['Быстрая гамма вверх до девятой ступени и вниз на «а».',
       'Пойте легко и негромко, как смех.'],
     feel: 'Ноты отдельные, но связные. Тяжёлый звук быстро не побежит — облегчайте.',
   },
   staccato: {
-    title: 'Стаккато «ха-ха»', cat: 'Беглость', min: 3, type: 'pattern', degrees: ARP8, noteDur: 0.42, syllable: 'ха', maxReps: 6,
+    title: 'Стаккато «ха-ха»', cat: 'Беглость', type: 'pattern', degrees: ARP8, noteDur: 0.42, syllable: 'ха', sec: 160,
     how: ['Спойте арпеджио короткими отрывистыми звуками на «ха».',
       'Каждый звук — лёгкий толчок животом, как смех.'],
     feel: 'Толчок идёт от живота, горло не смыкается с усилием. Нота точная с первого мгновения.',
   },
   'intervals-1': {
-    title: 'Интервалы: секунды и терции', cat: 'Слух', min: 4, type: 'match', mode: 'interval', intervals: [2, 3, 4, -2], count: 6,
+    title: 'Интервалы: секунды и терции', cat: 'Слух', type: 'match', mode: 'interval', intervals: [2, 3, 4, -2], count: 8,
     how: ['Приложение сыграет нижний звук и назовёт интервал.',
       'Спойте второй звук интервала сами — его не сыграют заранее.',
       'После попытки вы услышите правильный ответ.'],
     feel: 'Пропойте про себя гамму от первого звука до нужной ступени — так проще найти ноту.',
   },
   'intervals-2': {
-    title: 'Интервалы: кварта и квинта', cat: 'Слух', min: 4, type: 'match', mode: 'interval', intervals: [5, 7, 4, 3, -3, -4], count: 6,
+    title: 'Интервалы: кварта и квинта', cat: 'Слух', type: 'match', mode: 'interval', intervals: [5, 7, 4, 3, -3, -4], count: 8,
     how: ['Приложение сыграет первый звук и назовёт интервал.',
       'Спойте второй звук сами, затем сверьтесь с ответом.'],
     feel: 'Кварта — начало многих гимнов и маршей, квинта звучит «пусто» и устойчиво.',
   },
   'intervals-3': {
-    title: 'Интервалы: сексты и октава', cat: 'Слух', min: 4, type: 'match', mode: 'interval', intervals: [8, 9, 12, 7, -5, -7], count: 6,
+    title: 'Интервалы: сексты и октава', cat: 'Слух', type: 'match', mode: 'interval', intervals: [8, 9, 12, 7, -5, -7], count: 8,
     how: ['Приложение сыграет первый звук и назовёт интервал.',
       'Спойте второй звук сами, затем сверьтесь с ответом.'],
     feel: 'Широкий скачок берите сверху, заранее представив ноту.',
   },
   song: {
-    title: 'Работа над песней', cat: 'Песня', min: 6, type: 'song',
+    title: 'Работа над песней', cat: 'Песня', type: 'song',
     how: ['Откройте песню и поработайте над двумя-тремя фразами.',
       'Сначала на слог, потом со словами, затем спойте кусок целиком.'],
     feel: 'Переносите в песню то, что получилось в упражнениях: мягкое начало звука и ровный выдох.',
@@ -208,41 +215,41 @@ const STAGES = [
 
 export const WEEKS = [
   { title: 'Дыхание и мягкий звук',
-    goal: 'Научиться дышать животом, включать голос без нажима и попадать в отдельные ноты.',
-    session: ['breath-446', 'exhale-sss', 'lip-trill-glide', 'hum-glide', 'match-notes', 'sustain', 'cooldown'] },
+    goal: 'Научиться дышать животом, включать голос без нажима, попадать в отдельные ноты и спеть шаг вверх и назад.',
+    session: ['breath-446', 'exhale-sss', 'lip-trill-glide', 'hum-glide', 'match-notes', 'step-2', 'sustain', 'cooldown'] },
   { title: 'Опора и первые попевки',
     goal: 'Удлинить выдох, снимать ноту с инструмента и спеть первые три ступени.',
-    session: ['breath-446', 'exhale-sss', 'lip-trill-glide', 'match-notes', 'echo', 'scale-3', 'sustain', 'cooldown'] },
+    session: ['breath-446', 'exhale-sss', 'lip-trill-glide', 'match-notes', 'echo', 'step-2', 'scale-3', 'sustain', 'cooldown'] },
   { title: 'Пять нот',
     goal: 'Чисто петь поступенное движение в пределах квинты.',
     session: ['exhale-sss', 'lip-trill-glide', 'trill-5', 'scale-3', 'scale-5', 'echo', 'sustain', 'cooldown'] },
   { title: 'Трезвучие и первые интервалы',
     goal: 'Брать скачки на терцию и квинту, слышать секунды и терции.',
-    session: ['exhale-sss', 'trill-5', 'scale-5', 'arp', 'intervals-1', 'sustain', 'cooldown'] },
+    session: ['exhale-sss', 'lip-trill-glide', 'trill-5', 'scale-5', 'arp', 'intervals-1', 'sustain', 'cooldown'] },
   { title: 'Гамма и широкие шаги',
     goal: 'Спеть гамму на октаву и уверенно находить кварту и квинту.',
-    session: ['lip-trill-glide', 'trill-5', 'scale-5', 'arp', 'scale-8', 'intervals-2', 'cooldown'] },
+    session: ['lip-trill-glide', 'trill-5', 'scale-5', 'arp', 'scale-8', 'intervals-2', 'sustain', 'cooldown'] },
   { title: 'Звук вперёд',
     goal: 'Найти верхний резонанс и сохранить его на разных гласных.',
-    session: ['straw-glide', 'hum-glide', 'ng-5', 'sustain-vowels', 'scale-5', 'arp', 'cooldown'] },
+    session: ['straw-glide', 'hum-glide', 'ng-5', 'sustain-vowels', 'scale-5', 'arp', 'scale-8', 'cooldown'] },
   { title: 'Переход между регистрами',
     goal: 'Проходить переходные ноты без срыва и без крика.',
-    session: ['straw-glide', 'lip-trill-glide', 'octave-slide', 'nay-arp', 'ng-5', 'scale-8', 'cooldown'] },
+    session: ['straw-glide', 'lip-trill-glide', 'octave-slide', 'nay-arp', 'ng-5', 'scale-8', 'sustain-vowels', 'cooldown'] },
   { title: 'Ровный голос сверху донизу',
     goal: 'Соединить нижнее и верхнее звучание и расширить слуховой запас интервалов.',
-    session: ['lip-trill-glide', 'octave-slide', 'gug-down', 'nay-arp', 'sustain-vowels', 'intervals-3', 'cooldown'] },
+    session: ['straw-glide', 'lip-trill-glide', 'octave-slide', 'gug-down', 'nay-arp', 'scale-5', 'sustain-vowels', 'intervals-3', 'cooldown'] },
   { title: 'Расширение диапазона',
     goal: 'Добавить по одной-две уверенные ноты вверх и вниз.',
-    session: ['straw-glide', 'lip-trill-glide', 'arp-8', 'octave-jump', 'gug-down', 'sustain', 'cooldown'] },
+    session: ['straw-glide', 'lip-trill-glide', 'scale-5', 'arp-8', 'octave-jump', 'gug-down', 'sustain', 'cooldown'] },
   { title: 'Беглость и динамика',
     goal: 'Петь быстро и легко, управлять громкостью без потери высоты.',
-    session: ['lip-trill-glide', 'trill-5', 'scale-9', 'staccato', 'messa', 'intervals-3', 'cooldown'] },
+    session: ['lip-trill-glide', 'trill-5', 'scale-9', 'staccato', 'arp-8', 'messa', 'intervals-3', 'cooldown'] },
   { title: 'Техника в песне',
     goal: 'Перенести навыки в песню: дыхание по фразам, точные первые ноты.',
-    session: ['lip-trill-glide', 'scale-5', 'arp-8', 'messa', 'cooldown'] },
+    session: ['straw-glide', 'lip-trill-glide', 'scale-5', 'arp-8', 'staccato', 'messa', 'cooldown'] },
   { title: 'Исполнение',
     goal: 'Спеть песню целиком уверенно и записать результат.',
-    session: ['straw-glide', 'lip-trill-glide', 'arp-8', 'sustain-vowels', 'cooldown'] },
+    session: ['straw-glide', 'lip-trill-glide', 'scale-5', 'arp-8', 'nay-arp', 'sustain-vowels', 'cooldown'] },
 ];
 
 export const stageOf = (week) => STAGES.find((s) => s.weeks.includes(week)) || STAGES[STAGES.length - 1];
@@ -275,7 +282,19 @@ export function sessionItems(st) {
   return ids;
 }
 
-export const sessionMinutes = (ids) => ids.reduce((a, id) => a + (LIB[id] ? LIB[id].min : 0), 0);
+/** Длительность упражнения в секундах для этого ученика. */
+export function exerciseSeconds(id, st, week = st.plan.week) {
+  const ex = resolve(id, st, week);
+  return ex ? estimateSeconds(ex) : 0;
+}
+
+/** Длительность занятия в минутах: сами упражнения плюс время на переходы между ними. */
+export function sessionMinutes(st, ids = sessionItems(st), week = st.plan.week) {
+  const sec = ids.reduce((a, id) => a + exerciseSeconds(id, st, week) + T.between, 0);
+  return Math.round(sec / 60);
+}
+
+export const exerciseMinutes = (id, st, week) => Math.max(1, Math.round((exerciseSeconds(id, st, week) + T.between) / 60));
 
 /**
  * Готовит упражнение под ученика: ноты в его диапазоне, допуск по неделе,
@@ -292,7 +311,13 @@ export function resolve(id, st, week = st.plan.week) {
     headphones: !!st.settings.headphones,
     range: { lo: profile.low, hi: profile.high },
   };
-  const zone = zoneOf(profile, def.zone || stageZone(week));
+  let zone = zoneOf(profile, def.zone || stageZone(week));
+  // С девятой недели упражнения на диапазон выходят чуть за измеренные границы.
+  const stretch = def.stretch && week >= 9 ? { below: 1, above: week >= 10 ? 2 : 1 } : null;
+  if (stretch) {
+    zone = { lo: profile.low - stretch.below, hi: profile.high + stretch.above };
+    ex.stretched = true;
+  }
 
   if (def.type === 'pattern') {
     const dmin = Math.min(...def.degrees);
@@ -303,14 +328,26 @@ export function resolve(id, st, week = st.plan.week) {
       first = Math.max(profile.low - dmin, Math.min(first, profile.high - dmax));
       last = first;
     }
-    const count = last - first + 1;
-    const step = Math.max(1, Math.ceil(count / (def.maxReps || 6)));
-    const roots = [];
-    for (let r = first; r <= last; r += step) roots.push(r);
-    ex.reps = roots.map((root) => ({
+    const len = def.degrees.length * def.noteDur;
+    const repSec = repSeconds(len, def.noteDur, st.settings.refMode === 'own');
+    const budget = def.sec || 130;
+    // Вверх по полутонам и обратно вниз. Верхняя ступень входит всегда.
+    const wave = (step) => {
+      const up = [];
+      for (let r = last; r >= first; r -= step) up.unshift(r);
+      return up.concat(up.slice(0, -1).reverse());
+    };
+    let step = 1;
+    let roots = wave(step);
+    while (roots.length * repSec > budget * 1.25 && step < 4) roots = wave(++step);
+    // Если один проход короткий, добавляем второй и третий подход.
+    const sets = Math.max(1, Math.min(3, Math.round(budget / (roots.length * repSec))));
+    let all = roots;
+    for (let k = 1; k < sets; k++) all = all.concat(roots.length > 1 ? roots.slice(1) : roots);
+    ex.reps = all.map((root) => ({
       root,
       notes: def.degrees.map((d, i) => ({ midi: root + d, start: i * def.noteDur, dur: def.noteDur })),
-      len: def.degrees.length * def.noteDur,
+      len,
     }));
   } else if (def.type === 'sustain') {
     const n = def.count || 3;
@@ -393,3 +430,43 @@ export const PRESET_RANGES = [
   { label: 'Средний женский', low: 57, high: 79 },
   { label: 'Высокий женский', low: 60, high: 84 },
 ];
+
+/**
+ * Предлагает расширить рабочий диапазон, если ученик устойчиво поёт за его пределами.
+ * Свидетельства: скольжения (касание ноты считается с запасом в полутон) и чистые
+ * попадания в попевках, выходящих за диапазон. Нужны три занятия из последних шести.
+ * Возвращает { low, high } или null.
+ */
+export function rangeProposal(profile, sessions, dismissed = null) {
+  if (!profile) return null;
+  const highs = [];
+  const lows = [];
+  for (const ses of sessions.slice(-12)) {
+    let hi = null;
+    let lo = null;
+    for (const r of ses.results || []) {
+      if (!r.m || r.skipped) continue;
+      if (r.type === 'glide' && r.m.reps) {
+        hi = Math.max(hi ?? -Infinity, r.m.high - 1);
+        lo = Math.min(lo ?? Infinity, r.m.low + 1);
+      }
+      if (r.type === 'pattern' && r.m.beyond) {
+        if (r.m.beyond.topHit != null) hi = Math.max(hi ?? -Infinity, r.m.beyond.topHit);
+        if (r.m.beyond.lowHit != null) lo = Math.min(lo ?? Infinity, r.m.beyond.lowHit);
+      }
+    }
+    if (hi != null) highs.push(hi);
+    if (lo != null) lows.push(lo);
+  }
+  const third = (arr, desc) => {
+    const last = arr.slice(-6).sort((a, b) => (desc ? b - a : a - b));
+    return last.length >= 3 ? last[2] : null;
+  };
+  const h3 = third(highs, true);
+  const l3 = third(lows, false);
+  const high = h3 != null && h3 > profile.high ? Math.min(h3, profile.high + 2) : profile.high;
+  const low = l3 != null && l3 < profile.low ? Math.max(l3, profile.low - 2) : profile.low;
+  if (high === profile.high && low === profile.low) return null;
+  if (dismissed && dismissed.high >= high && dismissed.low <= low) return null;
+  return { low, high };
+}

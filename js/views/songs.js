@@ -401,10 +401,11 @@ export function songView(root, id) {
     const last = mel[mel.length - 1];
     const ex = {
       id: 'phrase', type: 'pattern', title: song.title, cat: 'Фраза', lyric: line.lyrics, syllable: 'ма',
+      noteDur: mel.map((n) => n.dur).sort((a, b) => a - b)[Math.floor(mel.length / 2)],
       reps: [{ root: mel[0].midi, notes: mel, len: last.start + last.dur }],
       tol: toleranceFor(state.plan.week), refMode: 'app', headphones: state.settings.headphones,
       range: { lo: state.profile.low, hi: state.profile.high },
-      how: ['Послушайте фразу, затем спойте её сами.',
+      how: ['Послушайте фразу, вдохните на два щелчка и спойте её сами.',
         'Первые разы пойте на слог «ма» или губной трелью — так легче поймать высоту.',
         'Когда попадание станет устойчивым, пойте со словами.'],
       feel: tempo < 1 ? `Темп ${Math.round(tempo * 100)}%. Когда получится — вернитесь к полному.` : 'Берите дыхание перед фразой, а не посередине.',

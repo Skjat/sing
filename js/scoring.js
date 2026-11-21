@@ -1,6 +1,7 @@
 // Оценка попадания голоса в целевые ноты. Чистые функции.
 
 import { median, stdDev } from './pitch.js';
+import { centsText } from './music.js';
 
 const round1 = (x) => (x == null ? null : Math.round(x * 10) / 10);
 
@@ -15,7 +16,7 @@ export function scoreTargets(targets, frames, opts = {}) {
   let fi = 0;
   for (const tg of targets) {
     // skipFrac задаёт долю ноты, отведённую на переход (для скольжений она больше).
-    const skip = opts.skipFrac != null ? tg.dur * opts.skipFrac : Math.min(0.14, tg.dur * 0.3);
+    const skip = skipOf(tg, opts);
     const from = tg.start + skip + latency;
     const to = tg.start + tg.dur + latency;
     while (fi < frames.length && frames[fi].t < from) fi++;
@@ -41,6 +42,103 @@ export function scoreTargets(targets, frames, opts = {}) {
   return summarizeNotes(notes);
 }
 
+/** Доля ноты, отведённая на переход к ней. */
+const skipOf = (tg, opts) => (opts.skipFrac != null ? tg.dur * opts.skipFrac : Math.min(0.14, tg.dur * 0.3));
+
+/**
+ * Насколько спетое совпадает с рисунком мелодии при данном сдвиге.
+ * Сравнивается форма линии, а не точность: постоянная фальшь на результат не влияет,
+ * поэтому подбор сдвига не может «подтянуть» неверную ноту к соседней цели.
+ */
+function contourCost(targets, frames, lag, opts) {
+  const latency = opts.latency ?? 0.05;
+  const devs = [];
+  let total = 0;
+  let fi = 0;
+  for (const tg of targets) {
+    const from = tg.start + lag + skipOf(tg, opts) + latency;
+    const to = tg.start + lag + tg.dur + latency;
+    while (fi < frames.length && frames[fi].t < from) fi++;
+    for (let i = fi; i < frames.length && frames[i].t <= to; i++) {
+      total++;
+      if (frames[i].midi != null) devs.push((frames[i].midi - tg.midi) * 100);
+    }
+  }
+  if (devs.length < 5 || !total) return Infinity;
+  const med = median(devs);
+  const spread = devs.reduce((a, d) => a + Math.min(300, Math.abs(d - med)), 0) / devs.length;
+  // Тишина там, где должна быть нота, тоже признак неверного сдвига.
+  return spread + 200 * (1 - devs.length / total);
+}
+
+/**
+ * То же, что scoreTargets, но прощает опоздание со вступлением: сначала находит сдвиг,
+ * при котором спетая линия лучше всего повторяет рисунок мелодии, затем оценивает ноты.
+ * В сводке появляются lagSec — на сколько ученик вступил позже (меньше нуля — раньше) — и fit.
+ */
+export function scoreAligned(targets, frames, opts = {}) {
+  if (!targets.length) return { ...summarizeNotes([]), lagSec: 0, fit: null };
+  const maxLag = opts.maxLag ?? 0.6;
+  const minLag = opts.minLag ?? -0.2;
+  const step = 0.05;
+  const last = targets[targets.length - 1];
+  const win = frames.filter((f) => f.t >= targets[0].start + minLag - 0.1 && f.t <= last.start + last.dur + maxLag + 0.2);
+  const shifts = [];
+  for (let k = Math.round(minLag / step); k <= Math.round(maxLag / step); k++) {
+    shifts.push({ lag: k * step, cost: contourCost(targets, win, k * step, opts) });
+  }
+  let best = shifts.reduce((a, b) => (b.cost < a.cost ? b : a), shifts[0]);
+  if (best.cost === Infinity) return { ...scoreTargets(targets, win, opts), lagSec: 0, fit: null };
+  // Окна оценки короче нот, поэтому одинаково хороших сдвигов несколько подряд: берём середину.
+  const at = shifts.indexOf(best);
+  let lo = at;
+  let hi = at;
+  while (lo > 0 && shifts[lo - 1].cost <= best.cost + 6) lo--;
+  while (hi < shifts.length - 1 && shifts[hi + 1].cost <= best.cost + 6) hi++;
+  const lag = shifts[Math.round((lo + hi) / 2)].lag;
+  const sc = scoreTargets(targets.map((tg) => ({ ...tg, start: tg.start + lag })), win, opts);
+  // Середина хороших сдвигов лежит раньше настоящего вступления на запас окна.
+  const dur = targets.map((t) => t.dur).sort((x, y) => x - y)[Math.floor(targets.length / 2)];
+  const real = (shifts[lo].lag + shifts[hi].lag) / 2 + (opts.latency ?? 0.05) + skipOf({ dur }, opts) / 2;
+  // fit — насколько спетое повторяет рисунок мелодии (меньше — лучше); по нему видно, можно ли верить lagSec.
+  return { ...sc, lagSec: Math.round(real * 100) / 100, fit: Math.round(best.cost) };
+}
+
+/**
+ * Сводка по местам в попевке. noteLists — оценённые ноты каждого повтора по порядку,
+ * semis — ступени попевки в полутонах от первой ноты.
+ * Возвращает [{ semis, n, hit (%), bias (центы) }].
+ */
+export function positionStats(noteLists, semis) {
+  return semis.map((s, i) => {
+    const notes = noteLists.map((list) => list[i]).filter(Boolean);
+    const sung = notes.filter((n) => n.sung);
+    return {
+      semis: s,
+      n: notes.length,
+      hit: notes.length ? Math.round((notes.filter((n) => n.hit).length / notes.length) * 100) : 0,
+      bias: sung.length ? Math.round(sung.reduce((a, n) => a + n.cents, 0) / sung.length) : null,
+    };
+  });
+}
+
+/** Сводка по высоте: повторы от одной и той же ноты объединяются. scores: [{ root, notes }]. */
+export function rootStats(scores) {
+  const map = new Map();
+  for (const sc of scores) {
+    if (!map.has(sc.root)) map.set(sc.root, []);
+    map.get(sc.root).push(...sc.notes);
+  }
+  return [...map.entries()].sort((a, b) => a[0] - b[0]).map(([root, notes]) => {
+    const sung = notes.filter((n) => n.sung);
+    return {
+      root,
+      hitRate: Math.round((notes.filter((n) => n.hit).length / notes.length) * 100),
+      bias: sung.length ? Math.round(sung.reduce((a, n) => a + n.cents, 0) / sung.length) : null,
+    };
+  });
+}
+
 /** Сводка по набору оценённых нот. */
 export function summarizeNotes(notes) {
   const sung = notes.filter((n) => n.sung);
@@ -60,9 +158,9 @@ export function summarizeNotes(notes) {
 
 /**
  * Оценка тянущейся ноты. frames — кадры за время попытки.
- * heldSec — сколько секунд голос был в пределах ±100 центов от цели.
+ * heldSec — сколько секунд голос был рядом с целью (в пределах band центов).
  */
-export function scoreSustain(target, frames, tol = 50) {
+export function scoreSustain(target, frames, tol = 50, band = 100) {
   const cents = [];
   let held = 0;
   let prevT = null;
@@ -71,7 +169,7 @@ export function scoreSustain(target, frames, tol = 50) {
     prevT = f.t;
     if (f.midi == null) continue;
     const c = (f.midi - target) * 100;
-    if (Math.abs(c) <= 100) {
+    if (Math.abs(c) <= band) {
       held += dt;
       cents.push(c);
     }
@@ -112,5 +210,5 @@ export function foldToOctave(sung, played) {
 export function biasText(cents) {
   if (cents == null) return '';
   if (Math.abs(cents) < 8) return 'точно';
-  return cents > 0 ? `выше на ${Math.abs(Math.round(cents))} ц` : `ниже на ${Math.abs(Math.round(cents))} ц`;
+  return cents > 0 ? `выше на ${centsText(cents)}` : `ниже на ${centsText(cents)}`;
 }

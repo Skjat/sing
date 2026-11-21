@@ -1,10 +1,10 @@
 // Офлайн-режим: приложение открывается без сети, свежая версия берётся из сети, когда она есть.
 
-const CACHE = 'golos-v1';
+const CACHE = 'golos-v2';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
   'js/app.js', 'js/audio.js', 'js/claude.js', 'js/curriculum.js', 'js/music.js', 'js/pitch.js',
-  'js/roll.js', 'js/runner.js', 'js/scoring.js', 'js/songparse.js', 'js/store.js', 'js/ui.js',
+  'js/roll.js', 'js/runner.js', 'js/scoring.js', 'js/songparse.js', 'js/store.js', 'js/timeline.js', 'js/tips.js', 'js/ui.js',
   'js/views/onboarding.js', 'js/views/plan.js', 'js/views/progress.js', 'js/views/session.js',
   'js/views/settings.js', 'js/views/songs.js', 'js/views/teacher.js', 'js/views/today.js',
   'vendor/anthropic-sdk.js',

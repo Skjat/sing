@@ -1,6 +1,6 @@
 // Занятие по плану и отдельное упражнение.
 
-import { state, save, saveNow, uid, dayKey, activeSong } from '../store.js';
+import { state, save, saveNow, uid, dayKey, activeSong, lastResultOf } from '../store.js';
 import { h, clear, go, toast, renderText } from '../ui.js';
 import { mountRunner, resultShort } from '../runner.js';
 import { stopMic } from '../audio.js';
@@ -66,7 +66,7 @@ export function sessionView(root) {
     if (id === 'song') { songStep(step); return; }
     const ex = resolve(id, state, draft.week);
     runner = mountRunner(root, ex, {
-      step, keepMic: true,
+      step, keepMic: true, prev: lastResultOf,
       onDone: (res) => { draft.results.push(res); saveNow(); next(); },
       onSkip: () => { draft.results.push({ id, title: LIB[id].title, type: LIB[id].type, skipped: true }); saveNow(); next(); },
       onExit: exit,
@@ -174,7 +174,7 @@ export function exerciseView(root, id) {
   const ex = resolve(id, state);
   const back = () => { stopMic(); history.length > 1 ? history.back() : go('plan'); };
   const runner = mountRunner(root, ex, {
-    doneLabel: 'Сохранить и выйти',
+    doneLabel: 'Сохранить и выйти', prev: lastResultOf,
     onDone: (res) => {
       if (!res.partial || res.score != null) {
         state.sessions.push({ id: uid(), date: new Date().toISOString(), week: state.plan.week, kind: 'free', results: [res], sec: res.sec, review: '' });

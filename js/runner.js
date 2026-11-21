@@ -2,37 +2,49 @@
 
 import * as audio from './audio.js';
 import { Roll } from './roll.js';
-import { h, clear, put, icon } from './ui.js';
-import { noteName, noteFull } from './music.js';
+import { h, clear, put, icon, plural } from './ui.js';
+import { noteName, noteFull, centsText } from './music.js';
 import { HoldDetector, segmentNotes, median, percentile } from './pitch.js';
-import { scoreTargets, scoreSustain, summarizeNotes, foldToOctave, biasText, voicedSeconds } from './scoring.js';
+import { scoreAligned, scoreSustain, summarizeNotes, positionStats, rootStats, foldToOctave, biasText, voicedSeconds } from './scoring.js';
+import { T, patternTimeline, countBeat, estimateSeconds } from './timeline.js';
+import { tipFor, compareWithPrev } from './tips.js';
 
 const r1 = (x) => Math.round(x * 10) / 10;
+const num = (x) => String(x).replace('.', ',');
 const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
+
+/**
+ * Опоздания, которым можно верить: только повторы, где спетое узнаваемо повторяет
+ * рисунок мелодии. Если таких меньше трети, момент вступления не определён.
+ */
+function trustedLags(scores) {
+  const good = scores.filter((s) => s.fit != null && s.fit <= 45).map((s) => s.lag);
+  return good.length >= Math.max(1, Math.ceil(scores.length / 3)) ? good : null;
+}
 
 // ---------- Режимы ----------
 
 function patternMode(ex, api) {
   const own = ex.refMode === 'own';
-  const line = [];
+  const noteDur = ex.noteDur || median(ex.reps[0].notes.map((n) => n.dur));
+  const semis = ex.reps[0].notes.map((n) => n.midi - ex.reps[0].root);
+  const lowest = Math.min(...semis);
+  const highest = Math.max(...semis);
+  const inRange = (midi) => midi >= ex.range.lo && midi <= ex.range.hi;
   const scores = [];
+  let line = [];
   let idx = 0;
   let scheduled = -1;
   return {
     start(now) {
-      let t = now + 1.2;
-      for (const rep of ex.reps) {
-        const refLen = own ? 2.6 : rep.len;
-        const singStart = t + refLen + 0.45;
-        line.push({
-          rep, refStart: t, singStart, singEnd: singStart + rep.len,
-          ref: own
-            ? [{ midi: rep.notes[0].midi, start: t, dur: refLen - 0.3, ref: true, label: 'сыграйте ' + noteName(rep.notes[0].midi) }]
-            : rep.notes.map((n) => ({ midi: n.midi, start: t + n.start, dur: n.dur, ref: true })),
-          sing: rep.notes.map((n) => ({ midi: n.midi, start: singStart + n.start, dur: n.dur })),
-        });
-        t = singStart + rep.len + 0.8;
-      }
+      line = patternTimeline(ex.reps, noteDur, now, own).map((seg) => ({
+        ...seg,
+        beyond: seg.rep.notes.some((n) => !inRange(n.midi)),
+        ref: own
+          ? [{ midi: seg.rep.notes[0].midi, start: seg.refStart, dur: seg.refLen - 0.3, ref: true, label: 'сыграйте ' + noteName(seg.rep.notes[0].midi) }]
+          : seg.rep.notes.map((n) => ({ midi: n.midi, start: seg.refStart + n.start, dur: n.dur, ref: true })),
+        sing: seg.rep.notes.map((n) => ({ midi: n.midi, start: seg.singStart + n.start, dur: n.dur })),
+      }));
       api.progress(0, line.length);
     },
     tick(now) {
@@ -41,42 +53,72 @@ function patternMode(ex, api) {
       if (scheduled < idx && now >= cur.refStart - 0.25) {
         scheduled = idx;
         if (!own) audio.playNotes(cur.rep.notes, cur.refStart, 0.6);
+        // Два щелчка в темпе попевки: на них вдох, после второго — вступление.
+        audio.playTick(cur.ticks[0]);
+        audio.playTick(cur.ticks[1], true);
         if (ex.headphones) audio.playNotes(cur.rep.notes, cur.singStart, 0.22);
       }
       const from = noteName(cur.rep.notes[0].midi);
+      const about = ex.lyric || (cur.beyond ? `От ${from} · за пределами диапазона: легко и тихо` : `Попевка от ${from}`);
       if (now < cur.refStart) {
         api.listen(false);
-        api.status('Приготовьтесь', ex.lyric || `Попевка от ${from}`);
+        api.count('');
+        api.status('Приготовьтесь', about);
+      } else if (now < cur.ticks[0] - 0.05) {
+        api.listen(false);
+        api.count('');
+        api.status(own ? `Сыграйте ${noteFull(cur.rep.notes[0].midi)}` : 'Слушайте', about);
       } else if (now < cur.singStart - 0.1) {
         api.listen(false);
-        api.status(own ? `Сыграйте ${noteFull(cur.rep.notes[0].midi)}` : 'Слушайте', ex.lyric || `Попевка от ${from}`);
-      } else if (now < cur.singEnd + 0.25) {
+        api.count(now < cur.ticks[1] - 0.05 ? '2' : '1');
+        api.status('Вдох', ex.lyric || 'Вступайте сразу после второго щелчка');
+      } else if (now < cur.singEnd + T.maxLag + 0.1) {
+        // Слушаем дольше самой попевки: опоздавшее вступление тоже засчитывается.
         api.listen(true);
-        api.status(ex.lyric ? 'Пойте' : `Пойте: «${ex.syllable}»`, ex.lyric || `От ${from}`);
+        api.count('');
+        api.status(ex.lyric ? 'Пойте' : `Пойте: «${ex.syllable}»`, about);
       } else {
         api.listen(false);
-        const sc = scoreTargets(cur.sing, api.frames(), { tol: ex.tol, skipFrac: ex.slide ? 0.55 : undefined });
-        scores.push({ root: cur.rep.root, ...sc });
+        const sc = scoreAligned(cur.sing, api.frames(), { tol: ex.tol, skipFrac: ex.slide ? 0.55 : undefined, maxLag: T.maxLag });
+        scores.push({ root: cur.rep.root, lag: sc.lagSec, fit: sc.fit, hits: sc.hits, notes: sc.notes });
+        api.dot(idx, sc.hitRate >= 75 ? 'ok' : sc.hitRate >= 45 ? 'warn' : 'bad');
         idx++;
         api.progress(idx, line.length);
         if (idx >= line.length) api.finish(this.result());
       }
     },
-    view() {
+    view(now) {
       const targets = [];
       for (let i = Math.max(0, idx - 1); i < Math.min(line.length, idx + 2); i++) targets.push(...line[i].ref, ...line[i].sing);
       const cur = line[Math.min(idx, line.length - 1)];
-      return { targets, lo: cur.rep.root + Math.min(...ex.reps[0].notes.map((n) => n.midi - ex.reps[0].root)) - 4,
-        hi: cur.rep.root + Math.max(...ex.reps[0].notes.map((n) => n.midi - ex.reps[0].root)) + 4 };
+      const active = cur.sing.find((t) => now >= t.start && now < t.start + t.dur);
+      return {
+        targets, lagOk: T.maxLag, target: active ? active.midi : null,
+        lo: cur.rep.root + lowest - 4, hi: cur.rep.root + highest + 4,
+      };
     },
     result() {
-      const all = summarizeNotes(scores.flatMap((s) => s.notes));
+      const flat = scores.flatMap((s) => s.notes);
+      const inside = flat.filter((n) => inRange(n.midi));
+      const outside = flat.filter((n) => !inRange(n.midi));
+      const all = summarizeNotes(inside.length ? inside : flat);
+      const lags = trustedLags(scores);
+      const hitAbove = outside.filter((n) => n.hit && n.midi > ex.range.hi).map((n) => n.midi);
+      const hitBelow = outside.filter((n) => n.hit && n.midi < ex.range.lo).map((n) => n.midi);
       return {
         score: scores.length ? all.hitRate : null,
         m: {
           hitRate: all.hitRate, notes: all.total, missed: all.missed,
           avgAbsCents: all.avgAbsCents, biasCents: all.biasCents, stdCents: all.stdCents,
-          reps: scores.map((s) => ({ from: noteName(s.root), hitRate: s.hitRate, bias: s.biasCents })),
+          // У скольжений оценивается только конец ноты, момент вступления по нему не определить.
+          lagSec: lags && !ex.slide ? Math.round(median(lags) * 100) / 100 : null,
+          reps: rootStats(scores).map((r) => ({ from: noteName(r.root), hitRate: r.hitRate, bias: r.bias })),
+          degrees: positionStats(scores.map((s) => s.notes), semis),
+          beyond: outside.length ? {
+            notes: outside.length, hits: outside.filter((n) => n.hit).length,
+            topHit: hitAbove.length ? Math.max(...hitAbove) : null,
+            lowHit: hitBelow.length ? Math.min(...hitBelow) : null,
+          } : undefined,
         },
         partial: scores.length < ex.reps.length,
       };
@@ -86,14 +128,19 @@ function patternMode(ex, api) {
 
 function sustainMode(ex, api) {
   const own = ex.refMode === 'own';
+  // Нота считается «той самой», пока голос не дальше двух допусков от цели.
+  const band = Math.max(60, (ex.tol ?? 50) * 2);
   const out = [];
   let i = 0;
   let singStart = 0;
   let refStart = 0;
   let started = null;
   let lastVoiced = null;
+  let onTarget = 0;
+  let lastTick = null;
   const begin = (now) => {
-    started = lastVoiced = null;
+    started = lastVoiced = lastTick = null;
+    onTarget = 0;
     refStart = now + 0.8;
     if (ex.free) singStart = refStart;
     else {
@@ -112,23 +159,33 @@ function sustainMode(ex, api) {
         return;
       }
       api.listen(true);
+      const dt = lastTick == null ? 0 : Math.min(0.1, now - lastTick);
+      lastTick = now;
       if (f && f.midi != null) {
         if (started == null) started = now;
         lastVoiced = now;
+        // Таймер идёт только на верной ноте.
+        if (!ex.free && Math.abs(f.midi - target) * 100 <= band) onTarget += dt;
       }
-      const held = started == null ? 0 : now - started;
+      const held = ex.free ? (started == null ? 0 : now - started) : onTarget;
       api.big(started == null ? '' : held.toFixed(1) + ' с');
       api.status(ex.free ? 'Тяните «а» как можно дольше' : `Тяните: «${ex.syllable}»`,
-        ex.free ? 'Любая удобная нота' : `${noteFull(target)} · цель ${ex.holdSec} с`);
+        ex.free ? 'Любая удобная нота' : `${noteFull(target)} · цель ${ex.holdSec} с на этой ноте`);
       const silent = started != null && now - lastVoiced > 0.7;
       const noStart = started == null && now - singStart > 12;
-      const enough = !ex.free && started != null && held >= ex.holdSec + 0.3;
-      if (silent || noStart || enough || now - singStart > 75) {
+      const enough = !ex.free && onTarget >= ex.holdSec;
+      // Если ученик долго поёт мимо цели, попытку заканчиваем сами.
+      const astray = !ex.free && started != null && now - started > ex.holdSec * 2.5 + 4;
+      if (silent || noStart || enough || astray || now - singStart > 75) {
         const win = api.frames().filter((fr) => fr.t >= singStart);
         if (ex.free) {
           const vals = win.filter((fr) => fr.midi != null).map((fr) => fr.midi);
           out.push({ midi: vals.length ? Math.round(median(vals)) : null, heldSec: voicedSeconds(win, (fr) => fr.midi != null) });
-        } else out.push(scoreSustain(target, win, ex.tol));
+        } else {
+          const sc = scoreSustain(target, win, ex.tol, band);
+          out.push(sc);
+          api.dot(i, sc.heldSec >= ex.holdSec * 0.8 && sc.inTol >= 70 ? 'ok' : sc.heldSec > 0 ? 'warn' : 'bad');
+        }
         api.big('');
         i++;
         if (i >= ex.notes.length) api.finish(this.result());
@@ -138,12 +195,12 @@ function sustainMode(ex, api) {
     view() {
       const target = ex.notes[Math.min(i, ex.notes.length - 1)];
       if (ex.free) return { targets: [], lo: ex.range.lo - 3, hi: ex.range.hi + 3 };
-      return { targets: [{ midi: target, start: singStart, dur: ex.holdSec }], lo: target - 6, hi: target + 6, target };
+      return { targets: [{ midi: target, start: singStart, dur: ex.holdSec * 2.5 + 4 }], lo: target - 6, hi: target + 6, target };
     },
     result() {
       const done = out.filter((o) => o.heldSec > 0);
       return {
-        score: ex.free ? null : (done.length ? Math.round(mean(done.map((o) => o.inTol))) : 0),
+        score: ex.free ? null : (done.length ? Math.round(mean(out.map((o) => (o.heldSec > 0 ? o.inTol : 0)))) : 0),
         m: {
           notes: out.map((o) => ({ note: o.midi == null ? null : noteName(o.midi), heldSec: o.heldSec, cents: o.cents ?? null, std: o.std ?? null, inTol: o.inTol ?? null })),
           bestHeldSec: out.length ? Math.max(...out.map((o) => o.heldSec)) : 0,
@@ -207,7 +264,7 @@ function glideMode(ex, api) {
       const cover = Math.max(0, Math.min(high, z.hi) - Math.max(low, z.lo)) / Math.max(1, z.hi - z.lo);
       return {
         score: Math.round(Math.min(1, cover) * 100),
-        m: { reps: ok.length, low, high, lowName: noteName(low), highName: noteName(high), span: high - low, zone: `${noteName(z.lo)}–${noteName(z.hi)}` },
+        m: { reps: ok.length, low, high, lowName: noteName(low), highName: noteName(high), span: high - low, zone: `${noteName(z.lo)}–${noteName(z.hi)}`, zoneLo: z.lo, zoneHi: z.hi },
         partial: out.length < ex.reps,
       };
     },
@@ -395,6 +452,7 @@ function exhaleMode(ex, api) {
   let started = null;
   let lastOn = null;
   let pauseUntil = 0;
+  let level = 0;
   const endRep = (now) => {
     const dur = r1(Math.max(0, lastOn - started));
     out.push(dur);
@@ -408,6 +466,9 @@ function exhaleMode(ex, api) {
     start(now) { phase = 'ready'; phaseStart = now; api.progress(0, ex.reps); },
     tick(now, f) {
       const on = !!f && f.rms > audio.getGate() * 1.6;
+      // Круг дышит вместе со звуком: видно, что приложение слышит выдох.
+      level += ((f ? audio.levelOf(f.rms) : 0) - level) * 0.25;
+      api.breath(0.35 + 0.65 * level);
       if (phase === 'pause') {
         if (now >= pauseUntil) { phase = 'ready'; phaseStart = now; onSince = null; api.big(''); api.progress(out.length, ex.reps); }
         return;
@@ -421,7 +482,7 @@ function exhaleMode(ex, api) {
             phase = 'run';
             started = onSince;
             lastOn = now;
-            api.action('Стоп', () => endRep(audio.now()));
+            api.action('Выдох окончен', () => endRep(audio.now()));
           }
         } else onSince = null;
         if (now - phaseStart > 20) { out.push(0); phase = 'pause'; pauseUntil = now + 0.5; if (out.length >= ex.reps) api.finish(this.result()); }
@@ -447,7 +508,10 @@ function exhaleMode(ex, api) {
 
 function breathMode(ex, api) {
   let t0 = 0;
+  let lastPhase = '';
   const cycle = ex.phases.reduce((a, p) => a + p.sec, 0);
+  // Сигналы смены фазы, чтобы не смотреть на экран: вверх — вдох, одна нота — задержка, вниз — выдох.
+  const cue = (i) => audio.playCue(i === 0 ? [60, 67] : i === ex.phases.length - 1 ? [67, 60] : [67]);
   return {
     clock: 'perf',
     start(now) { t0 = now + 0.5; api.progress(0, ex.cycles); },
@@ -455,13 +519,14 @@ function breathMode(ex, api) {
       const t = now - t0;
       if (t < 0) { api.status('Приготовьтесь', ''); return; }
       const n = Math.floor(t / cycle);
-      if (n >= ex.cycles) { api.breath(0.4); api.finish(this.result(ex.cycles)); return; }
+      if (n >= ex.cycles) { api.breath(0.4); audio.playCue([60, 64, 67]); api.finish(this.result(ex.cycles)); return; }
       api.progress(n, ex.cycles);
       let x = t - n * cycle;
       for (let i = 0; i < ex.phases.length; i++) {
         const p = ex.phases[i];
         if (x < p.sec) {
           const k = x / p.sec;
+          if (lastPhase !== `${n}:${i}`) { lastPhase = `${n}:${i}`; cue(i); }
           api.status(p.label, `${Math.ceil(p.sec - x)}`);
           // Круг растёт на вдохе, держится на задержке, сжимается на выдохе.
           api.breath(i === 0 ? 0.4 + 0.6 * k : i === ex.phases.length - 1 ? 1 - 0.6 * k : 1);
@@ -539,15 +604,21 @@ function rangeMode(ex, api) {
 function performMode(ex, api) {
   const line = [];
   const scores = [];
+  const lagMax = Math.min(T.maxLag, Math.max(0.2, ex.gap - 0.5));
   let idx = 0;
   let scheduled = -1;
   let lead = 0;
+  let firstTicks = [];
   return {
     start(now) {
       lead = now + 0.6;
-      // Настройка: первая нота песни, затем пауза на вдох.
+      // Настройка: первая нота песни, затем пауза на вдох и два щелчка.
       audio.playNote(ex.phrases[0].notes[0].midi, lead, 1.3, 0.6);
-      let t = lead + 3.2;
+      const beat = countBeat(median(ex.phrases[0].notes.map((n) => n.dur)));
+      let t = lead + 2.0 + 2 * beat;
+      firstTicks = [t - 2 * beat, t - beat];
+      audio.playTick(firstTicks[0]);
+      audio.playTick(firstTicks[1], true);
       for (const ph of ex.phrases) {
         line.push({ ph, start: t, end: t + ph.len, sing: ph.notes.map((n) => ({ midi: n.midi, start: t + n.start, dur: n.dur })) });
         t += ph.len + ex.gap;
@@ -564,30 +635,37 @@ function performMode(ex, api) {
       const next = line[idx + 1];
       if (now < cur.start - 0.15) {
         api.listen(false);
-        api.status(idx === 0 ? 'Послушайте первую ноту' : cur.ph.lyrics, idx === 0 ? cur.ph.lyrics : (next ? next.ph.lyrics : ''));
-      } else if (now < cur.end + 0.25) {
+        if (idx === 0) api.count(now < firstTicks[0] - 0.05 ? '' : now < firstTicks[1] - 0.05 ? '2' : '1');
+        api.status(idx === 0 ? (now < firstTicks[0] - 0.05 ? 'Послушайте первую ноту' : 'Вдох') : cur.ph.lyrics, idx === 0 ? cur.ph.lyrics : (next ? next.ph.lyrics : ''));
+      } else if (now < cur.end + lagMax + 0.1) {
         api.listen(true);
+        api.count('');
         api.status(cur.ph.lyrics, next ? next.ph.lyrics : '');
       } else {
-        const sc = scoreTargets(cur.sing, api.frames(), { tol: ex.tol });
-        scores.push({ key: cur.ph.key, lyrics: cur.ph.lyrics, ...sc });
+        const sc = scoreAligned(cur.sing, api.frames(), { tol: ex.tol, maxLag: lagMax });
+        scores.push({ key: cur.ph.key, lyrics: cur.ph.lyrics, lag: sc.lagSec, ...sc });
+        api.dot(idx, sc.hitRate >= 75 ? 'ok' : sc.hitRate >= 45 ? 'warn' : 'bad');
         idx++;
         api.progress(idx, line.length);
         if (idx >= line.length) { api.listen(false); api.finish(this.result()); }
       }
     },
-    view() {
+    view(now) {
       const targets = [];
       for (let i = Math.max(0, idx - 1); i < Math.min(line.length, idx + 2); i++) targets.push(...line[i].sing);
       if (idx === 0) targets.push({ midi: ex.phrases[0].notes[0].midi, start: lead, dur: 1.3, ref: true });
-      return { targets, lo: ex.lo - 3, hi: ex.hi + 3 };
+      const cur = line[Math.min(idx, line.length - 1)];
+      const active = cur.sing.find((t) => now >= t.start && now < t.start + t.dur);
+      return { targets, lagOk: lagMax, target: active ? active.midi : null, lo: ex.lo - 3, hi: ex.hi + 3 };
     },
     result() {
       const all = summarizeNotes(scores.flatMap((s) => s.notes));
+      const lags = trustedLags(scores);
       return {
         score: scores.length ? all.hitRate : null,
         m: {
-          hitRate: all.hitRate, avgAbsCents: all.avgAbsCents, biasCents: all.biasCents, missed: all.missed,
+          hitRate: all.hitRate, notes: all.total, avgAbsCents: all.avgAbsCents, biasCents: all.biasCents, missed: all.missed,
+          lagSec: lags ? Math.round(median(lags) * 100) / 100 : null,
           phrases: scores.map((s) => ({ key: s.key, lyrics: s.lyrics, hitRate: s.hitRate, avgAbs: s.avgAbsCents, bias: s.biasCents })),
         },
         partial: scores.length < ex.phrases.length,
@@ -610,13 +688,15 @@ export function resultLines(res) {
     case 'pattern':
     case 'perform':
       add('Попадание в ноты', `${m.hitRate}%`);
-      add('Среднее отклонение', m.avgAbsCents == null ? null : `${Math.round(m.avgAbsCents)} ц`);
+      add('Среднее отклонение', m.avgAbsCents == null ? null : centsText(m.avgAbsCents));
       add('Склонность', m.biasCents == null ? null : (Math.abs(m.biasCents) < 8 ? 'ровно' : m.biasCents > 0 ? 'завышаете' : 'занижаете'));
+      if (m.lagSec != null && m.lagSec >= 0.3) add('Вступление', `позже на ${num(Math.round(m.lagSec * 10) / 10)} с`);
       if (m.missed) add('Не спето нот', m.missed);
+      if (m.beyond) add('Ноты сверх диапазона', `${m.beyond.hits} из ${m.beyond.notes}`);
       break;
     case 'sustain':
-      add('Лучшая длительность', `${m.bestHeldSec} с`);
-      if (m.avgStdCents != null) add('Ровность (разброс)', `${m.avgStdCents} ц`);
+      add('Дольше всего на ноте', `${num(m.bestHeldSec)} с`);
+      if (m.avgStdCents != null) add('Ровность (разброс)', centsText(m.avgStdCents));
       if (m.biasCents != null) add('Высота', dev(m.biasCents));
       break;
     case 'glide':
@@ -625,16 +705,16 @@ export function resultLines(res) {
       break;
     case 'match':
       add('Засчитано', `${m.hitRate}%`);
-      add('Время до попадания', m.avgSec == null ? null : `${m.avgSec} с`);
+      add('Время до попадания', m.avgSec == null ? null : `${num(m.avgSec)} с`);
       add('Склонность', m.biasCents == null ? null : dev(m.biasCents));
       break;
     case 'echo':
       add('Точных повторов', `${m.hitRate}%`);
-      add('Среднее отклонение', m.avgAbsCents == null ? null : `${m.avgAbsCents} ц`);
+      add('Среднее отклонение', m.avgAbsCents == null ? null : centsText(m.avgAbsCents));
       break;
     case 'exhale':
-      add('Лучший выдох', `${m.bestSec} с`);
-      add('Средний', `${m.avgSec} с`);
+      add('Лучший выдох', `${num(m.bestSec)} с`);
+      add('Средний', `${num(m.avgSec)} с`);
       break;
     case 'breath':
       add('Циклов', m.cycles);
@@ -657,7 +737,7 @@ export function resultShort(res) {
 // ---------- Экран упражнения ----------
 
 /**
- * opts: { step, onDone(result), onExit(), onSkip(), onStart(), onFinish(), keepMic, doneLabel, autoStart }
+ * opts: { step, onDone(result), onExit(), onSkip(), onStart(), onFinish(), prev(id), keepMic, doneLabel, autoStart }
  * Возвращает { destroy() }.
  */
 export function mountRunner(root, ex, opts = {}) {
@@ -682,7 +762,15 @@ export function mountRunner(root, ex, opts = {}) {
     foot: h('div.run-foot'),
     body: h('div.run-body'),
     action: h('button.btn.ghost'),
+    count: h('div.run-count'),
+    levelBar: h('i'),
+    levelHint: h('span', 'Не слышу вас: пойте громче или ближе к телефону'),
   };
+  el.level = h('div.mic-level', { 'aria-hidden': 'true' }, h('b', el.levelBar), el.levelHint);
+  el.levelHint.hidden = true;
+  let dotCls = [];
+  let countText = '';
+  let quietSince = null;
 
   const api = {
     status(main, sub) {
@@ -692,8 +780,12 @@ export function mountRunner(root, ex, opts = {}) {
     big(text) { if (text !== bigText) { bigText = text; el.big.textContent = text; } },
     progress(i, n) {
       if (el.dots.childElementCount !== n) { clear(el.dots); for (let k = 0; k < n; k++) el.dots.append(h('span')); }
-      [...el.dots.children].forEach((d, k) => { d.className = k < i ? 'done' : k === i ? 'cur' : ''; });
+      [...el.dots.children].forEach((d, k) => { d.className = k < i ? 'done ' + (dotCls[k] || '') : k === i ? 'cur' : ''; });
     },
+    /** Цвет точки по итогу повтора: ok, warn или bad. */
+    dot(i, cls) { dotCls[i] = cls; },
+    /** Крупная цифра отсчёта поверх полотна. */
+    count(text) { if (text !== countText) { countText = text; el.count.textContent = text; } },
     listen(on) { S.listening = on; },
     frames: () => S.frames,
     breath(scale) { el.circle.style.transform = `scale(${scale.toFixed(3)})`; },
@@ -718,6 +810,15 @@ export function mountRunner(root, ex, opts = {}) {
       if (f && S.listening) S.frames.push(f);
     }
     const now = clock();
+    if (f) {
+      const heard = f.rms > audio.getGate();
+      el.levelBar.style.transform = `scaleX(${audio.levelOf(f.rms).toFixed(3)})`;
+      el.level.classList.toggle('on', heard);
+      // Подсказка появляется, если приложение ждёт голос, а его нет.
+      if (heard || !S.listening) quietSince = null;
+      else if (quietSince == null) quietSince = now;
+      el.levelHint.hidden = !(quietSince != null && now - quietSince > 3.5);
+    }
     S.mode.tick(now, f);
     if (S.state !== 'running') return;
     const view = S.mode.view(now);
@@ -738,8 +839,10 @@ export function mountRunner(root, ex, opts = {}) {
     const cents = Math.round((f.midi - ref) * 100);
     el.note.textContent = noteName(Math.round(f.midi));
     if (view.target != null) {
-      el.cents.textContent = (cents > 0 ? '+' : '') + cents + ' ц';
-      el.cents.className = 'run-cents ' + (Math.abs(cents) <= (ex.tol ?? 50) ? 'ok' : Math.abs(cents) <= (ex.tol ?? 50) * 2 ? 'warn' : 'bad');
+      const tol = ex.tol ?? 50;
+      const dir = cents > tol ? '↓ ниже' : cents < -tol ? '↑ выше' : '✓';
+      el.cents.textContent = `${dir} · ${cents > 0 ? '+' : ''}${cents} ц`;
+      el.cents.className = 'run-cents ' + (Math.abs(cents) <= tol ? 'ok' : Math.abs(cents) <= tol * 2 ? 'warn' : 'bad');
     } else {
       el.cents.textContent = '';
     }
@@ -766,7 +869,10 @@ export function mountRunner(root, ex, opts = {}) {
     S.mode = MODES[ex.type](ex, api);
     S.state = 'running';
     S.startedAt = Date.now();
-    statusMain = statusSub = bigText = '';
+    statusMain = statusSub = bigText = countText = '';
+    el.count.textContent = '';
+    dotCls = [];
+    quietSince = null;
     render();
     if (hasRoll) { roll = new Roll(el.canvas); }
     S.mode.start(clock());
@@ -786,6 +892,9 @@ export function mountRunner(root, ex, opts = {}) {
       sec: Math.round((Date.now() - S.startedAt) / 1000),
       ...result,
     };
+    S.tips = tipFor(S.result, ex);
+    if (S.tips.length) S.result.tip = S.tips.join(' ');
+    S.compare = opts.prev ? compareWithPrev(S.result, opts.prev(ex.id)) : null;
     render();
   }
 
@@ -799,6 +908,9 @@ export function mountRunner(root, ex, opts = {}) {
   const onResize = () => { if (roll) roll.resize(); };
   document.addEventListener('visibilitychange', onHide);
   window.addEventListener('resize', onResize);
+  // Полотно меняет высоту, когда над ним появляется таймер: подстраиваем разметку.
+  const watcher = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : null;
+  if (watcher) watcher.observe(el.canvas);
 
   function render() {
     clear(root);
@@ -812,9 +924,20 @@ export function mountRunner(root, ex, opts = {}) {
     if (S.state === 'idle') {
       put(el.body, 
         h('div.card.how',
-          h('h3', 'Как выполнять'),
+          h('div.card-head', h('h3', 'Как выполнять'), h('span.muted', volume())),
           h('ol', (ex.how || []).map((t) => h('li', t))),
           ex.feel ? h('p.feel', ex.feel) : null),
+        hasRoll ? h('details.legend',
+          h('summary', 'Что на экране'),
+          h('ul.plain',
+            h('li', ex.refMode === 'own' ? 'Оранжевая полоса — нота, которую нужно спеть.' : 'Бирюзовые полосы — образец, оранжевые — то, что поёте вы.'),
+            h('li', 'Линия — ваш голос: зелёная — попали, жёлтая — близко, красная — мимо.'),
+            ['pattern', 'perform'].includes(ex.type) ? h('li', 'Перед вступлением звучат два щелчка: на них вдох, после второго — пойте. Небольшое опоздание оценку не снижает.') : null,
+            h('li', 'Отклонение показано в центах (ц): 100 ц — полутон. Стрелка говорит, куда двигаться.'),
+            h('li', 'Полоска микрофона вверху слева загорается, когда приложение вас слышит.'))) : null,
+        ex.stretched && ex.type === 'pattern'
+          ? h('p.hint', 'Верхние повторы выходят на 1–2 полутона за ваш измеренный диапазон. Пойте их легко и тихо. Если звук давится или хрипит — этот повтор просто не пойте: диапазон растёт постепенно.')
+          : null,
         needsMic && ex.refMode === 'own' && ['pattern', 'sustain', 'match'].includes(ex.type)
           ? h('p.hint', 'Опорный звук — ваш инструмент. Дайте ноте отзвучать перед тем, как петь: микрофон слышит и инструмент.')
           : null,
@@ -827,19 +950,24 @@ export function mountRunner(root, ex, opts = {}) {
         opts.onSkip ? h('button.btn.ghost', { onclick: () => opts.onSkip() }, 'Пропустить') : null);
     } else if (S.state === 'running') {
       const stage = h('div.run-stage');
-      if (hasRoll) stage.append(el.canvas, h('div.run-readout', el.note, el.cents));
+      if (hasRoll) stage.append(el.canvas, el.count, el.level, h('div.run-readout', el.note, el.cents));
       else if (ex.type === 'breath') stage.append(h('div.breath-wrap', el.circle));
+      else stage.append(h('div.breath-wrap', el.circle), el.level);
       put(el.body, h('div.run-top', el.status, el.sub, el.big), stage, el.dots);
       put(el.foot, el.action, h('button.btn.ghost', { onclick: stopEarly }, 'Завершить'));
     } else {
       const res = S.result;
       const lines = resultLines(res);
+      const found = [resultDetails(res)].flat(3).filter(Boolean);
+      const details = found.length ? found : null;
       put(el.body, 
         h('div.card.result',
           h('h3', res.partial ? 'Упражнение прервано' : 'Результат'),
           res.score != null ? h('div.score', { class: res.score >= 75 ? 'ok' : res.score >= 45 ? 'warn' : 'bad' }, `${res.score}%`) : null,
           lines.length ? h('dl', lines.map((l) => [h('dt', l.label), h('dd', l.value)])) : h('p.muted', 'Данных для оценки не набралось.'),
-          resultDetails(res)));
+          S.compare ? h('p.muted.compare', S.compare) : null),
+        S.tips && S.tips.length ? h('div.card.advice', h('h3', 'Совет'), S.tips.map((t) => h('p', t))) : null,
+        details ? h('div.card.result', details) : null);
       put(el.foot, 
         h('button.btn.primary.wide', { onclick: () => opts.onDone && opts.onDone(res) }, opts.doneLabel || 'Дальше'),
         h('button.btn.ghost', { onclick: () => { S.state = 'idle'; render(); } }, 'Повторить'));
@@ -849,10 +977,17 @@ export function mountRunner(root, ex, opts = {}) {
 
   function resultDetails(res) {
     const m = res.m || {};
-    if ((res.type === 'pattern') && m.reps && m.reps.length > 1) {
-      return h('div.bars', m.reps.map((r) => h('div.bar', { title: `от ${r.from}` },
-        h('i', { style: { height: Math.max(4, r.hitRate) + '%' }, class: r.hitRate >= 75 ? 'ok' : r.hitRate >= 45 ? 'warn' : 'bad' }),
-        h('span', r.from))));
+    if (res.type === 'pattern') {
+      const tone = (v) => (v >= 75 ? 'ok' : v >= 45 ? 'warn' : 'bad');
+      return [
+        m.degrees && m.degrees.length > 1 && m.notes ? [h('h4', ex.lyric ? 'По нотам фразы' : 'По нотам попевки'), degreeChart(m.degrees)] : null,
+        m.reps && m.reps.length > 1 ? [
+          h('h4', 'По высоте: от какой ноты'),
+          h('div.bars', m.reps.map((r) => h('div.bar', { title: `от ${r.from}` },
+            h('i', { style: { height: Math.max(4, r.hitRate) + '%' }, class: tone(r.hitRate) }),
+            h('span', r.from)))),
+        ] : null,
+      ];
     }
     if (res.type === 'perform' && m.phrases) {
       return h('ul.phrase-scores', m.phrases.map((p) => h('li',
@@ -866,9 +1001,54 @@ export function mountRunner(root, ex, opts = {}) {
         `${it.played} ${it.cents == null ? '—' : (it.cents > 0 ? '+' : '') + it.cents + ' ц'}`)));
     }
     if (res.type === 'exhale' && m.durations) {
-      return h('div.chips', m.durations.map((d) => h('span.chip', `${d.toFixed(1)} с`)));
+      return h('div.chips', m.durations.map((d) => h('span.chip', `${num(d.toFixed(1))} с`)));
     }
     return null;
+  }
+
+  /** Объём упражнения до старта: «17 повторов · около 2 мин». */
+  function volume() {
+    const min = Math.max(1, Math.round(estimateSeconds(ex) / 60));
+    if (ex.free || ex.type === 'range' || ex.type === 'perform' || ex.lyric) return '';
+    const count = (n, one, few, many) => `${n} ${plural(n, one, few, many)}`;
+    const what = ex.type === 'pattern' ? count(ex.reps.length, 'повтор', 'повтора', 'повторов')
+      : ex.type === 'sustain' ? count(ex.notes.length, 'нота', 'ноты', 'нот')
+        : ex.type === 'match' ? count(ex.items.length, 'нота', 'ноты', 'нот')
+          : ex.type === 'echo' ? count(ex.rounds, 'раз', 'раза', 'раз')
+            : ['glide', 'exhale'].includes(ex.type) ? count(ex.reps, 'повтор', 'повтора', 'повторов')
+              : ex.type === 'breath' ? count(ex.cycles, 'цикл', 'цикла', 'циклов') : '';
+    return what ? `${what} · около ${min} мин` : '';
+  }
+
+  /**
+   * Рисунок попевки: точки повторяют её контур, цвет — доля попаданий,
+   * подпись — среднее смещение в центах там, где оно заметно.
+   */
+  function degreeChart(degrees) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const mk = (tag, attrs, text) => {
+      const node = document.createElementNS(NS, tag);
+      for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+      if (text != null) node.textContent = text;
+      return node;
+    };
+    const W = 320;
+    const H = 96;
+    const lo = Math.min(...degrees.map((d) => d.semis));
+    const hi = Math.max(...degrees.map((d) => d.semis));
+    const x = (i) => 16 + (i * (W - 32)) / Math.max(1, degrees.length - 1);
+    const y = (s) => 62 - ((s - lo) / Math.max(1, hi - lo)) * 46;
+    const svg = mk('svg', { viewBox: `0 0 ${W} ${H}`, class: 'degrees', role: 'img',
+      'aria-label': degrees.map((d, i) => `нота ${i + 1}: попадание ${d.hit}%${d.bias == null ? '' : `, смещение ${d.bias} центов`}`).join('; ') });
+    svg.append(mk('path', { class: 'contour', d: degrees.map((d, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(d.semis).toFixed(1)}`).join('') }));
+    const dense = degrees.length > 9;
+    degrees.forEach((d, i) => {
+      svg.append(mk('circle', { cx: x(i), cy: y(d.semis), r: dense ? 5 : 7, class: d.hit >= 75 ? 'ok' : d.hit >= 45 ? 'warn' : 'bad' }));
+      if (d.bias != null && Math.abs(d.bias) >= 15) {
+        svg.append(mk('text', { x: x(i), y: 88, 'text-anchor': 'middle', class: 'lab' }, (d.bias > 0 ? '+' : '−') + Math.abs(d.bias)));
+      }
+    });
+    return h('div.degrees-wrap', svg, h('p.muted', 'Цвет — как часто попадали в ноту; число — на сколько центов в среднем выше (+) или ниже (−).'));
   }
 
   function exit() {
@@ -886,6 +1066,7 @@ export function mountRunner(root, ex, opts = {}) {
       audio.keepAwake(false);
       document.removeEventListener('visibilitychange', onHide);
       window.removeEventListener('resize', onResize);
+      if (watcher) watcher.disconnect();
       if (!opts.keepMic) audio.stopMic();
     },
   };

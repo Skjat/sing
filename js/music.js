@@ -148,4 +148,18 @@ export function guessVoiceType(low, high) {
   return best;
 }
 
+/** «цент», «цента», «центов» — по числу. */
+export function centsWord(n) {
+  const v = Math.abs(Math.round(n));
+  const a = v % 100;
+  const b = v % 10;
+  if (a > 10 && a < 20) return 'центов';
+  if (b === 1) return 'цент';
+  if (b >= 2 && b <= 4) return 'цента';
+  return 'центов';
+}
+
+/** «34 цента» */
+export const centsText = (n) => `${Math.abs(Math.round(n))} ${centsWord(n)}`;
+
 export const rangeLabel = (low, high) => `${noteName(low)} – ${noteName(high)}`;

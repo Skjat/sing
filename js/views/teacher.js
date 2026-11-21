@@ -92,6 +92,23 @@ export function teacherView(root) {
         },
       }, 'Очистить') : null));
 
+  if (state.teacherNotes) {
+    page.append(h('details.card',
+      h('summary', 'Заметки учителя о вас'),
+      h('p.muted', 'Учитель не помнит прошлые разговоры, поэтому ведёт заметки и переписывает их при каждом недельном разборе. Вместе с последними разборами они передаются ему в каждом запросе.'),
+      h('div.notes', state.teacherNotes.split('\n').filter((l) => l.trim()).map((l) => h('p', l.replace(/^[-•*]\s*/, '')))),
+      h('button.btn.ghost.sm', {
+        onclick: async () => {
+          if (await confirmSheet('Стереть заметки?', 'Учитель начнёт вести их заново со следующего недельного разбора.', 'Стереть', true)) {
+            state.teacherNotes = '';
+            saveNow();
+            clear(root);
+            teacherView(root);
+          }
+        },
+      }, 'Стереть заметки')));
+  }
+
   if (!hasKey()) {
     page.append(h('div.card.empty',
       h('h3', 'Учитель не подключён'),

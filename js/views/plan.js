@@ -2,7 +2,7 @@
 
 import { state, saveNow, sessionsThisWeek } from '../store.js';
 import { h, clear, go, sheet, toast, confirmSheet } from '../ui.js';
-import { LIB, WEEKS, STAGES, sessionItems, sessionMinutes } from '../curriculum.js';
+import { LIB, WEEKS, STAGES, sessionItems, sessionMinutes, exerciseMinutes } from '../curriculum.js';
 import { hasKey, weeklyReview, explainError } from '../claude.js';
 import { WEEK_TARGET } from './today.js';
 
@@ -11,7 +11,7 @@ const DECISION = { advance: 'Перейти к следующей неделе',
 export function exerciseSheet(id) {
   const e = LIB[id];
   sheet(e.title, (close) => h('div',
-    h('p.muted', `${e.cat} · ≈ ${e.min} мин`),
+    h('p.muted', `${e.cat} · ≈ ${exerciseMinutes(id, state)} мин`),
     h('ol', e.how.map((t) => h('li', t))),
     e.feel ? h('p.feel', e.feel) : null,
     id !== 'song'
@@ -52,7 +52,7 @@ export function planView(root) {
         h('small', `Сейчас: неделя ${week}`),
         h('h2', WEEKS[week - 1].title),
         h('p', WEEKS[week - 1].goal),
-        h('div.card-head', h('h3', 'Занятие'), h('span.muted', `≈ ${sessionMinutes(ids)} мин`)),
+        h('div.card-head', h('h3', 'Занятие'), h('span.muted', `≈ ${sessionMinutes(state, ids)} мин`)),
         h('ul.ex-list.tap', ids.map((id) => h('li', { onclick: () => exerciseSheet(id) },
           h('span.ex-title', LIB[id].title), h('span.muted', LIB[id].cat)))),
         state.plan.override && state.plan.override.week === week
@@ -109,6 +109,8 @@ export function planView(root) {
     const close = sheet('Недельный разбор', box);
     try {
       const d = await weeklyReview();
+      // Заметки — память учителя об ученике; они сохраняются независимо от решения по плану.
+      if (d.notes && d.notes.trim()) { state.teacherNotes = d.notes.trim().slice(0, 2000); saveNow(); }
       const week = state.plan.week;
       const target = d.decision === 'advance' ? Math.min(12, week + 1) : week;
       clear(box).append(

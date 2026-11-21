@@ -1,9 +1,9 @@
 // Главный экран: занятие на сегодня.
 
-import { state, streak, sessionsThisWeek, doneToday, dayKey, saveFailed } from '../store.js';
-import { h, go, icon, fmtDate, plural, renderText } from '../ui.js';
-import { LIB, WEEKS, stageOf, sessionItems, sessionMinutes } from '../curriculum.js';
-import { rangeLabel } from '../music.js';
+import { state, saveNow, streak, sessionsThisWeek, doneToday, dayKey, saveFailed } from '../store.js';
+import { h, clear, go, icon, fmtDate, plural, renderText, toast } from '../ui.js';
+import { LIB, WEEKS, stageOf, sessionItems, sessionMinutes, rangeProposal } from '../curriculum.js';
+import { rangeLabel, guessVoiceType } from '../music.js';
 import { hasKey } from '../claude.js';
 
 export const WEEK_TARGET = 5;
@@ -18,6 +18,8 @@ export function todayView(root) {
   const days = streak();
   const lastReviewed = [...state.sessions].reverse().find((s) => s.review);
   const ov = state.plan.override && state.plan.override.week === week ? state.plan.override : null;
+  const grown = rangeProposal(state.profile, state.sessions, state.rangeDismissed);
+  const again = () => { clear(root); todayView(root); };
 
   const startLabel = draft ? `Продолжить (${draft.results.length} из ${draft.ids.length})` : done ? 'Позаниматься ещё раз' : 'Начать занятие';
 
@@ -46,8 +48,25 @@ export function todayView(root) {
       ? h('div.card.note-card', h('h3', 'Акцент от учителя'), h('p', ov.focus))
       : null,
 
+    grown
+      ? h('div.card.note-card',
+        h('h3', 'Диапазон вырос'),
+        h('p', `В последних занятиях вы устойчиво поёте за пределами измеренного диапазона. Обновить его: ${rangeLabel(state.profile.low, state.profile.high)} → ${rangeLabel(grown.low, grown.high)}? Ноты упражнений подстроятся под новые границы.`),
+        h('div.row',
+          h('button.btn.ghost', { onclick: () => { state.rangeDismissed = grown; saveNow(); again(); } }, 'Не сейчас'),
+          h('button.btn.primary', {
+            onclick: () => {
+              Object.assign(state.profile, { low: grown.low, high: grown.high, voiceType: guessVoiceType(grown.low, grown.high).id, rangeUpdatedAt: new Date().toISOString() });
+              state.rangeDismissed = null;
+              saveNow();
+              toast(`Диапазон: ${rangeLabel(grown.low, grown.high)}`);
+              again();
+            },
+          }, 'Обновить')))
+      : null,
+
     h('div.card',
-      h('div.card-head', h('h3', done ? 'Занятие выполнено' : 'Занятие'), h('span.muted', `≈ ${sessionMinutes(ids)} мин`)),
+      h('div.card-head', h('h3', done ? 'Занятие выполнено' : 'Занятие'), h('span.muted', `≈ ${sessionMinutes(state, ids)} мин`)),
       h('ol.ex-list', ids.map((id, i) => {
         const res = draft && draft.results[i];
         return h('li', { class: res ? 'done' : '' },

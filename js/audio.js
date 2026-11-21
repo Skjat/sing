@@ -35,6 +35,8 @@ export function getCtx() {
 /** Вызывать из обработчика нажатия: браузер разрешает звук только после жеста. */
 export async function unlock() {
   const c = getCtx();
+  // Без микрофона звук должен играть и при выключенном звонке.
+  if (!micActive()) setSession('playback');
   if (c.state !== 'running') {
     try { await c.resume(); } catch { /* повторим при следующем жесте */ }
   }
@@ -163,6 +165,38 @@ export function playNotes(notes, t0, gain = 0.5) {
 /** Аккорд с лёгким арпеджированием. */
 export function playChord(midis, when, dur, gain = 0.3) {
   midis.forEach((m, i) => playNote(m, when + i * 0.018, dur, gain / Math.sqrt(Math.max(1, midis.length) / 2)));
+}
+
+/** Короткий щелчок отсчёта. */
+export function playTick(when, accent = false) {
+  const c = getCtx();
+  const t = Math.max(when, c.currentTime + 0.005);
+  const osc = c.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.value = accent ? 1320 : 990;
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(0.22, t + 0.004);
+  g.gain.exponentialRampToValueAtTime(0.0005, t + 0.07);
+  osc.connect(g);
+  g.connect(master);
+  osc.start(t);
+  osc.stop(t + 0.09);
+  live.add(osc);
+  osc.onended = () => { live.delete(osc); try { g.disconnect(); } catch { /* уже отключён */ } };
+}
+
+/** Мягкий сигнал из нескольких нот, например для смены фазы дыхания. */
+export function playCue(midis, gain = 0.3) {
+  const t = getCtx().currentTime + 0.02;
+  midis.forEach((m, i) => playNote(m, t + i * 0.13, 0.16, gain));
+}
+
+/** Уровень сигнала 0..1 для индикатора: от порога тишины до громкого пения. */
+export function levelOf(rms) {
+  if (!rms || rms <= 0) return 0;
+  const db = 20 * Math.log10(rms);
+  return Math.max(0, Math.min(1, (db + 52) / 40));
 }
 
 export function stopSound() {

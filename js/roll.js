@@ -161,9 +161,13 @@ export class Roll {
 
   colorFor(f, view, tol) {
     const c = this.colors;
+    const lag = view.lagOk || 0;
     let tg = null;
     for (const t of view.targets || []) {
-      if (!t.ref && f.t >= t.start && f.t <= t.start + t.dur + 0.05) { tg = t; break; }
+      if (t.ref || f.t < t.start || f.t > t.start + t.dur + Math.max(0.05, lag)) continue;
+      // Верная нота, спетая с допустимым опозданием, тоже считается попаданием.
+      if (Math.abs(f.midi - t.midi) * 100 <= tol) return c.ok;
+      if (!tg || f.t <= t.start + t.dur + 0.05) tg = t;
     }
     if (!tg) return view.neutral || c.ref;
     const cents = Math.abs(f.midi - tg.midi) * 100;
